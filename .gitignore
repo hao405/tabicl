@@ -1,0 +1,7 @@
+# Block large/binary/checkpoint/data files
+*.npy
+*.pq
+*.parquet
+*.ckpt
+*.json
+*.zip

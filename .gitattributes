@@ -1,0 +1,2 @@
+*.npy !text !filter !merge !diff
+*.zip !text !filter !merge !diff
