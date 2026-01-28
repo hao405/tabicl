@@ -487,6 +487,8 @@ def main(argv=None):
 
     logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
     
+    script_start_time = time.time()
+    
     data_root = Path(args.data_root)
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -550,12 +552,14 @@ def main(argv=None):
     if all_results:
         # 汇总统计
         total_time = sum(duration for _, _, duration in all_results)
-        avg_time = total_time / len(all_results)
-        avg_acc = sum(acc for _, acc, _ in all_results) / len(all_results)
+        
+        script_duration = time.time() - script_start_time
 
         csv_path = outdir / 'talent_detailed.csv'
-        with open(csv_path, 'w') as f:
-            f.write('dataset,accuracy,time_s\n')
+        write_header = not csv_path.exists()
+        with open(csv_path, 'a') as f:
+            if write_header:
+                f.write('dataset,accuracy,time_s\n')
             for name, acc, duration in all_results:
                 f.write(f"{name},{acc:.6f},{duration:.3f}\n")
             f.write(f"Average,{avg_acc:.6f},{avg_time:.3f}\n")
@@ -566,11 +570,13 @@ def main(argv=None):
         avg_missing_acc = sum(acc for _, acc in missing_results) / len(missing_results) if missing_results else None
 
         summary_path = outdir / 'talent_summary.txt'
-        with open(summary_path, 'w') as f:
+        with open(summary_path, 'a') as f:
+            f.write(f"\n--- Run at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
             f.write(f"Total datasets: {len(all_results)}\n")
             f.write(f"Average accuracy: {avg_acc:.6f}\n")
-            f.write(f"Total time s: {total_time:.3f}\n")
-            f.write(f"Average time s: {avg_time:.3f}\n")
+            f.write(f"Total inference time s: {total_time:.3f}\n")
+            f.write(f"Average inference time s: {avg_time:.3f}\n")
+            f.write(f"Script total execution time s: {script_duration:.3f}\n")
             if missing_results:
                 f.write(f"Datasets with NaN values: {len(missing_names)}\n")
                 f.write(f"Average accuracy (NaN datasets): {avg_missing_acc:.6f}\n")
@@ -578,6 +584,8 @@ def main(argv=None):
             else:
                 f.write("Datasets with NaN values: 0\n")
 
+        logging.info(f"Evaluation complete. Results saved to {outdir}")
+        logging.info(f"Average Accuracy: {avg_acc:.4f}, Average Time: {avg_time:.2f}s, Script Duration: {script_duration
         logging.info(f"Evaluation complete. Results saved to {outdir}")
         logging.info(f"Average Accuracy: {avg_acc:.4f}, Average Time: {avg_time:.2f}s")
     else:
