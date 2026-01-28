@@ -552,6 +552,8 @@ def main(argv=None):
     if all_results:
         # 汇总统计
         total_time = sum(duration for _, _, duration in all_results)
+        avg_time = total_time / len(all_results)
+        avg_acc = sum(acc for _, acc, _ in all_results) / len(all_results)
         
         script_duration = time.time() - script_start_time
 
@@ -585,9 +587,7 @@ def main(argv=None):
                 f.write("Datasets with NaN values: 0\n")
 
         logging.info(f"Evaluation complete. Results saved to {outdir}")
-        logging.info(f"Average Accuracy: {avg_acc:.4f}, Average Time: {avg_time:.2f}s, Script Duration: {script_duration
-        logging.info(f"Evaluation complete. Results saved to {outdir}")
-        logging.info(f"Average Accuracy: {avg_acc:.4f}, Average Time: {avg_time:.2f}s")
+        logging.info(f"Average Accuracy: {avg_acc:.4f}, Average Time: {avg_time:.2f}s, Script Duration: {script_duration:.2f}s")
     else:
         logging.info("No successful results obtained.")
 
