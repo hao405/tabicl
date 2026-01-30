@@ -381,7 +381,7 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, dataset
     print(f"{msg_prefix} Initializing model on {device_str} for {len(dataset_dirs)} datasets...")
     
     try:
-        clf = TabICLClassifier(verbose=verbose, model_path=model_path, device=device_str,norm_methods=["robust"])
+        clf = TabICLClassifier(verbose=verbose, model_path=model_path, device=device_str,norm_methods=["power"])
     except Exception as e:
         print(f"{msg_prefix} Model initialization failed: {e}")
         return [], set()
