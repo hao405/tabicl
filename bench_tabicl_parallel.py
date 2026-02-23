@@ -16,6 +16,12 @@ import logging
 from pathlib import Path
 import os
 import sys
+from pathlib import Path
+
+src_path = str(Path(__file__).resolve().parent / "src")
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
 from typing import Optional, Tuple, Union, List
 
 import json
@@ -364,6 +370,12 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpo
     Worker function to evaluate a subset of datasets on a specific GPU.
     Returns a list of results (name, acc, duration) and a set of datasets with missing values.
     """
+    import sys
+    from pathlib import Path
+    src_path = str(Path(__file__).resolve().parent / "src")
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+
     try:
         from tabicl import TabICLClassifier
         from sklearn.utils.multiclass import type_of_target
