@@ -14,9 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-import os
 import sys
-from pathlib import Path
 
 src_path = str(Path(__file__).resolve().parent / "src")
 if src_path not in sys.path:
@@ -30,82 +28,10 @@ import pandas as pd
 import time
 import multiprocessing
 import math
-import torch
 
 # ------------------------------
-# 数据预处理工具 (unchanged)
+# 数据缺失统计工具
 # ------------------------------
-
-def convert_features(X: np.ndarray, enabled: bool) -> np.ndarray:
-    """可选：把特征矩阵强制转换为数值型。"""
-    X = np.asarray(X)
-    if not enabled:
-        return X
-
-    if X.ndim == 1:
-        X = X.reshape(-1, 1)
-
-    df = pd.DataFrame(X)
-    encoded = pd.DataFrame(index=df.index)
-
-    for col in df.columns:
-        series = df.iloc[:, col]
-        numeric_series = pd.to_numeric(series, errors='coerce')
-
-        if series.isna().equals(numeric_series.isna()):
-            encoded[col] = numeric_series
-        else:
-            string_series = series.astype("string")
-            codes, uniques = pd.factorize(string_series, sort=True)
-            codes = codes.astype(np.int32)
-            if (codes == -1).any():
-                codes[codes == -1] = len(uniques)
-            encoded[col] = codes
-
-    return encoded.fillna(0).values.astype(np.float32)
-
-
-def handle_missing_entries(X: np.ndarray, y: np.ndarray, *, context: str) -> tuple[np.ndarray, np.ndarray]:
-    """处理缺失值并保证 X/y 对齐。"""
-    X = np.asarray(X)
-    y = np.asarray(y)
-    context = context or "dataset"
-
-    df = pd.DataFrame(X)
-    y_series = pd.Series(y, index=df.index)
-
-    drop_mask = pd.Series(False, index=df.index)
-
-    for col in df.columns:
-        series = df.iloc[:, col]
-        numeric_series = pd.to_numeric(series, errors='coerce')
-
-        if series.isna().equals(numeric_series.isna()):
-            nan_mask = numeric_series.isna()
-            if nan_mask.any():
-                mean_value =  float(numeric_series.mean(skipna=True))
-                if np.isnan(mean_value):
-                    mean_value = 0.0
-                df.iloc[:, col] = numeric_series.fillna(mean_value)
-                logging.debug(
-                    "%s: 数值列 %s 使用均值 %.6f 填充 %d 个 NaN",
-                    context,
-                    col,
-                    mean_value,
-                    int(nan_mask.sum()),
-                )
-        else:
-            nan_mask = series.isna()
-            if nan_mask.any():
-                drop_mask |= nan_mask
-
-    if drop_mask.any():
-        drop_count = int(drop_mask.sum())
-        df = df.loc[~drop_mask].copy()
-        y_series = y_series.loc[df.index]
-        logging.debug("%s: 删除 %d 行包含字符串缺失值", context, drop_count)
-
-    return df.values, y_series.values
 
 
 def count_missing(values: np.ndarray) -> int:
@@ -184,13 +110,13 @@ def load_array(file_path: Path) -> np.ndarray:
     return pd.read_csv(file_path, sep=sep, header=None).values
 
 
-def load_table(file_path: Union[Path, Tuple], context: str = "", coerce_numeric: bool = False,
+def load_table(file_path: Union[Path, Tuple], context: str = "",
                dataset_id: str | None = None, missing_registry: set[str] | None = None) -> Tuple[
-    np.ndarray, np.ndarray]:
+    pd.DataFrame, np.ndarray]:
     if isinstance(file_path, (tuple, list)):
         if len(file_path) == 2:
             Xp, yp = Path(file_path[0]), Path(file_path[1])
-            return load_pair(Xp, yp, context=context, coerce_numeric=coerce_numeric, dataset_id=dataset_id,
+            return load_pair(Xp, yp, context=context, dataset_id=dataset_id,
                              missing_registry=missing_registry)
         if len(file_path) == 3:
             num_path, cat_path, y_path = file_path
@@ -199,7 +125,6 @@ def load_table(file_path: Union[Path, Tuple], context: str = "", coerce_numeric:
                 Path(cat_path) if cat_path else None,
                 Path(y_path),
                 context=context,
-                coerce_numeric=coerce_numeric,
                 dataset_id=dataset_id,
                 missing_registry=missing_registry,
             )
@@ -248,16 +173,15 @@ def load_table(file_path: Union[Path, Tuple], context: str = "", coerce_numeric:
     log_nan_presence(f"{log_target}-y_raw", y, dataset_id=dataset_id, missing_registry=missing_registry)
 
     y = pd.Series(y).values
-    X, y = handle_missing_entries(X, y, context=log_target)
-    X = convert_features(X, coerce_numeric)
+    X = pd.DataFrame(X)
 
     if heuristic_column:
         logging.info(f"{log_target}: 使用单文件启发式拆分标签 (取 {heuristic_column} 列)")
     return X, y
 
 
-def load_pair(X_path: Path, y_path: Path, context: str = "", coerce_numeric: bool = False,
-              dataset_id: str | None = None, missing_registry: set[str] | None = None) -> Tuple[np.ndarray, np.ndarray]:
+def load_pair(X_path: Path, y_path: Path, context: str = "",
+              dataset_id: str | None = None, missing_registry: set[str] | None = None) -> Tuple[pd.DataFrame, np.ndarray]:
     X = load_array(X_path)
     y = load_array(y_path)
 
@@ -274,16 +198,17 @@ def load_pair(X_path: Path, y_path: Path, context: str = "", coerce_numeric: boo
     X = np.asarray(X)
     if X.ndim == 1:
         X = X.reshape(-1, 1)
+    if X.ndim == 3 and X.shape[1] == 1:
+        X = X.squeeze(1)
 
     y = pd.Series(y).values
-    X, y = handle_missing_entries(X, y, context=ctx)
-    X = convert_features(X, coerce_numeric)
+    X = pd.DataFrame(X)
     return X, y
 
 
 def load_split(num_path: Optional[Path], cat_path: Optional[Path], y_path: Path, context: str = "",
-               coerce_numeric: bool = False, dataset_id: str | None = None, missing_registry: set[str] | None = None) -> \
-Tuple[np.ndarray, np.ndarray]:
+               dataset_id: str | None = None, missing_registry: set[str] | None = None) -> \
+Tuple[pd.DataFrame, np.ndarray]:
     features = []
     ctx_base = context or (num_path.stem if num_path else (cat_path.stem if cat_path else y_path.stem))
     if num_path:
@@ -310,6 +235,8 @@ Tuple[np.ndarray, np.ndarray]:
             raise ValueError(f"Feature array #{idx} has mismatched sample count: {feat.shape[0]} vs {n_samples}")
 
     X = features[0] if len(features) == 1 else np.concatenate(features, axis=1)
+    if X.ndim == 3 and X.shape[1] == 1:
+        X = X.squeeze(1)
     log_nan_presence(f"{ctx_base}-X_raw", X, dataset_id=dataset_id, missing_registry=missing_registry)
 
     y = load_array(y_path)
@@ -320,8 +247,7 @@ Tuple[np.ndarray, np.ndarray]:
     elif y.ndim > 1 and y.shape[0] == 1:
         y = y.squeeze(0)
     y = pd.Series(y).values
-    X, y = handle_missing_entries(X, y, context=ctx_base)
-    X = convert_features(X, coerce_numeric)
+    X = pd.DataFrame(X)
     return X, y
 
 
@@ -365,7 +291,7 @@ def summarize_task_types(dirs: list[Path]) -> dict[str, int]:
 
 def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpoint_version: str, dataset_dirs: List[Path],
                             verbose: bool = False, skip_regression: bool = True, bins: int = 0,
-                            merge_val: bool = False, coerce_numeric: bool = True):
+                            merge_val: bool = False):
     """
     Worker function to evaluate a subset of datasets on a specific GPU.
     Returns a list of results (name, acc, duration) and a set of datasets with missing values.
@@ -420,9 +346,9 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpo
                 continue
 
             if train_path and test_path:
-                X_train, y_train = load_table(train_path, context=f"{d.name}-train", coerce_numeric=coerce_numeric,
+                X_train, y_train = load_table(train_path, context=f"{d.name}-train",
                                               dataset_id=d.name, missing_registry=datasets_with_missing)
-                X_test, y_test = load_table(test_path, context=f"{d.name}-test", coerce_numeric=coerce_numeric,
+                X_test, y_test = load_table(test_path, context=f"{d.name}-test",
                                             dataset_id=d.name, missing_registry=datasets_with_missing)
             else:
                 print(f"{msg_prefix} 数据集：{d.name} (即使是单文件也暂不支持自动拆分或逻辑未触发)")
@@ -431,23 +357,14 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpo
 
             X_val = y_val = None
             if val_path:
-                X_val, y_val = load_table(val_path, context=f"{d.name}-val", coerce_numeric=coerce_numeric,
+                X_val, y_val = load_table(val_path, context=f"{d.name}-val",
                                           dataset_id=d.name, missing_registry=datasets_with_missing)
-                if X_val.ndim == 3 and X_val.shape[1] == 1:
-                    X_val = X_val.squeeze(1)
-                if X_val.ndim == 1:
-                    X_val = X_val.reshape(-1, 1)
                 y_val = np.asarray(y_val)
                 if y_val.ndim > 1 and y_val.shape[-1] == 1:
                     y_val = y_val.reshape(-1)
                 if merge_val:
-                    X_train = np.concatenate([X_train, X_val], axis=0)
+                    X_train = pd.concat([X_train, X_val], axis=0, ignore_index=True)
                     y_train = np.concatenate([y_train, y_val], axis=0)
-
-            if X_train.ndim == 3 and X_train.shape[1] == 1:
-                X_train = X_train.squeeze(1)
-            if X_test.ndim == 3 and X_test.shape[1] == 1:
-                X_test = X_test.squeeze(1)
 
             # Target type check
             tgt_type = None
@@ -486,16 +403,14 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpo
 
 def main(argv=None):
     p = argparse.ArgumentParser(description='Parallel Benchmark TabICLClassifier on TALENT datasets')
-    p.add_argument('--model-path', default='step-460000.ckpt', help='Path to TabICL checkpoint')
+    p.add_argument('--model-path', default=None, help='Path to TabICL checkpoint')
     p.add_argument('--data-root', default='data149', help='Root path to TALENT data folder')
-    p.add_argument('--outdir', default='evalution_data154_zijian', help='Directory to save results')
+    p.add_argument('--outdir', default='evalution_data154_tabiclv2', help='Directory to save results')
     p.add_argument('--max-datasets', type=int, default=None, help='Limit number of datasets')
     p.add_argument('--verbose', action='store_true')
     p.add_argument('--merge-val', default=True, action='store_true')
     p.add_argument('--num-gpus', type=int, default=4, help='Number of GPUs to use')
-    p.add_argument('--no-coerce-numeric', dest='coerce_numeric', action='store_false')
     p.add_argument('--checkpoint-version', default='tabicl-classifier-v2-20260212.ckpt', help='Checkpoint version to use')
-    p.set_defaults(coerce_numeric=True)
     args = p.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
@@ -525,7 +440,7 @@ def main(argv=None):
     logging.info(f"Split into {len(chunks)} chunks. Max chunk size: {chunk_size}")
 
     # Prepare arguments for starmap
-    # (rank, device_id, model_path, dataset_dirs, verbose, skip_regression, bins, merge_val, coerce_numeric)
+    # (rank, device_id, model_path, checkpoint_version, dataset_dirs, verbose, skip_regression, bins, merge_val)
     tasks = []
     for i, chunk in enumerate(chunks):
         # Determine device ID. If we have more chunks than GPUs (unlikely with this logic logic), mod it.
@@ -542,8 +457,7 @@ def main(argv=None):
             args.verbose,
             True, # skip_regression
             0,    # bins
-            args.merge_val,
-            args.coerce_numeric
+            args.merge_val
         ))
 
     # Run in parallel using multiprocessing
