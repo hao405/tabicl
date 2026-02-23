@@ -381,7 +381,7 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, dataset
     print(f"{msg_prefix} Initializing model on {device_str} for {len(dataset_dirs)} datasets...")
     
     try:
-        clf = TabICLClassifier(verbose=verbose, model_path=model_path, device=device_str,norm_methods=["power"])
+        clf = TabICLClassifier(verbose=verbose, model_path=model_path, device=device_str)
     except Exception as e:
         print(f"{msg_prefix} Model initialization failed: {e}")
         return [], set()
@@ -474,13 +474,13 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, dataset
 
 def main(argv=None):
     p = argparse.ArgumentParser(description='Parallel Benchmark TabICLClassifier on TALENT datasets')
-    p.add_argument('--model-path', default='tabicl-classifier-v1.1-0506.ckpt', help='Path to TabICL checkpoint')
-    p.add_argument('--data-root', default='data181', help='Root path to TALENT data folder')
+    p.add_argument('--model-path', default='tabicl-classifier-v2-20260212.ckpt', help='Path to TabICL checkpoint')
+    p.add_argument('--data-root', default='data149', help='Root path to TALENT data folder')
     p.add_argument('--outdir', default='evalution_talent_quantile_robust', help='Directory to save results')
     p.add_argument('--max-datasets', type=int, default=None, help='Limit number of datasets')
     p.add_argument('--verbose', action='store_true')
     p.add_argument('--merge-val', default=True, action='store_true')
-    p.add_argument('--num-gpus', type=int, default=8, help='Number of GPUs to use')
+    p.add_argument('--num-gpus', type=int, default=4, help='Number of GPUs to use')
     p.add_argument('--no-coerce-numeric', dest='coerce_numeric', action='store_false')
     p.set_defaults(coerce_numeric=True)
     args = p.parse_args(argv)
