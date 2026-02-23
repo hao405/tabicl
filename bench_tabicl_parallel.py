@@ -357,7 +357,7 @@ def summarize_task_types(dirs: list[Path]) -> dict[str, int]:
 # 核心评测逻辑 (Worker)
 # ------------------------------
 
-def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, dataset_dirs: List[Path],
+def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpoint_version: str, dataset_dirs: List[Path],
                             verbose: bool = False, skip_regression: bool = True, bins: int = 0,
                             merge_val: bool = False, coerce_numeric: bool = True):
     """
@@ -381,7 +381,7 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, dataset
     print(f"{msg_prefix} Initializing model on {device_str} for {len(dataset_dirs)} datasets...")
     
     try:
-        clf = TabICLClassifier(verbose=verbose, model_path=model_path, device=device_str, checkpoint_version="tabicl-classifier-v2-20260212.ckpt")
+        clf = TabICLClassifier(verbose=verbose, model_path=model_path, device=device_str, checkpoint_version=checkpoint_version)
     except Exception as e:
         print(f"{msg_prefix} Model initialization failed: {e}")
         return [], set()
@@ -482,6 +482,7 @@ def main(argv=None):
     p.add_argument('--merge-val', default=True, action='store_true')
     p.add_argument('--num-gpus', type=int, default=4, help='Number of GPUs to use')
     p.add_argument('--no-coerce-numeric', dest='coerce_numeric', action='store_false')
+    p.add_argument('--checkpoint-version', default='tabicl-classifier-v2-20260212.ckpt', help='Checkpoint version to use')
     p.set_defaults(coerce_numeric=True)
     args = p.parse_args(argv)
 
@@ -524,6 +525,7 @@ def main(argv=None):
             i, 
             device_id,
             args.model_path,
+            args.checkpoint_version,
             chunk,
             args.verbose,
             True, # skip_regression
