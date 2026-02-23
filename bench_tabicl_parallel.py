@@ -405,7 +405,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description='Parallel Benchmark TabICLClassifier on TALENT datasets')
     p.add_argument('--model-path', default=None, help='Path to TabICL checkpoint')
     p.add_argument('--data-root', default='data149', help='Root path to TALENT data folder')
-    p.add_argument('--outdir', default='evalution_data154_tabiclv2', help='Directory to save results')
+    p.add_argument('--outdir', default='evalution_data154_tabiclv2_new', help='Directory to save results')
     p.add_argument('--max-datasets', type=int, default=None, help='Limit number of datasets')
     p.add_argument('--verbose', action='store_true')
     p.add_argument('--merge-val', default=True, action='store_true')
