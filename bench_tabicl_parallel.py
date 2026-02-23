@@ -381,7 +381,7 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, dataset
     print(f"{msg_prefix} Initializing model on {device_str} for {len(dataset_dirs)} datasets...")
     
     try:
-        clf = TabICLClassifier(verbose=verbose, model_path=model_path, device=device_str)
+        clf = TabICLClassifier(verbose=verbose, model_path=model_path, device=device_str, checkpoint_version="tabicl-classifier-v2-20260212.ckpt")
     except Exception as e:
         print(f"{msg_prefix} Model initialization failed: {e}")
         return [], set()
@@ -474,7 +474,7 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, dataset
 
 def main(argv=None):
     p = argparse.ArgumentParser(description='Parallel Benchmark TabICLClassifier on TALENT datasets')
-    p.add_argument('--model-path', default='tabicl-classifier-v2-20260212.ckpt', help='Path to TabICL checkpoint')
+    p.add_argument('--model-path', default=None, help='Path to TabICL checkpoint')
     p.add_argument('--data-root', default='data149', help='Root path to TALENT data folder')
     p.add_argument('--outdir', default='evalution_data154_tabiclv2', help='Directory to save results')
     p.add_argument('--max-datasets', type=int, default=None, help='Limit number of datasets')
