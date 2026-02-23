@@ -291,7 +291,7 @@ def summarize_task_types(dirs: list[Path]) -> dict[str, int]:
 
 def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpoint_version: str, dataset_dirs: List[Path],
                             verbose: bool = False, skip_regression: bool = True, bins: int = 0,
-                            merge_val: bool = False):
+                            merge_val: bool = True):
     """
     Worker function to evaluate a subset of datasets on a specific GPU.
     Returns a list of results (name, acc, duration) and a set of datasets with missing values.
