@@ -494,7 +494,7 @@ def main(argv=None):
     p.add_argument('--merge-val', default=True, action='store_true')
     p.add_argument('--num-gpus', type=int, default=4, help='Number of GPUs to use')
     p.add_argument('--no-coerce-numeric', dest='coerce_numeric', action='store_false')
-    p.add_argument('--checkpoint-version', default='tabicl-classifier.ckpt', help='Checkpoint version to use')
+    p.add_argument('--checkpoint-version', default='tabicl-classifier-v1.1-20250506.ckpt', help='Checkpoint version to use')
     p.set_defaults(coerce_numeric=True)
     args = p.parse_args(argv)
 
