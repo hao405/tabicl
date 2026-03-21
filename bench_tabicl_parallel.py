@@ -36,6 +36,18 @@ import torch
 # 数据预处理工具 (unchanged)
 # ------------------------------
 
+
+def parse_kv_cache(value: str) -> bool | str:
+    """Parse CLI kv_cache values into the types expected by TabICLClassifier.fit()."""
+    lowered = value.strip().lower()
+    if lowered in {"false", "0", "no", "off"}:
+        return False
+    if lowered in {"true", "1", "yes", "on"}:
+        return True
+    if lowered in {"kv", "repr"}:
+        return lowered
+    raise argparse.ArgumentTypeError("kv_cache must be one of: false, true, kv, repr")
+
 def convert_features(X: np.ndarray, enabled: bool) -> np.ndarray:
     """可选：把特征矩阵强制转换为数值型。"""
     X = np.asarray(X)
@@ -365,7 +377,8 @@ def summarize_task_types(dirs: list[Path]) -> dict[str, int]:
 
 def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpoint_version: str, dataset_dirs: List[Path],
                             verbose: bool = False, skip_regression: bool = True, bins: int = 0,
-                            merge_val: bool = False, coerce_numeric: bool = True,n_estimators: int = 32) -> Tuple[List[Tuple[str, float, float]], set[str]]:
+                            merge_val: bool = False, coerce_numeric: bool = True,
+                            n_estimators: int = 32, kv_cache: bool | str = False) -> Tuple[List[Tuple[str, float, float]], set[str]]:
     """
     Worker function to evaluate a subset of datasets on a specific GPU.
     Returns a list of results (name, acc, duration) and a set of datasets with missing values.
@@ -467,7 +480,7 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpo
                         continue
 
             ds_start = time.time()
-            clf.fit(X_train, y_train)
+            clf.fit(X_train, y_train, kv_cache=kv_cache)
 
             y_pred = clf.predict(X_test)
             acc = float(np.mean(y_pred == y_test))
@@ -492,6 +505,12 @@ def main(argv=None):
     p.add_argument('--max-datasets', type=int, default=None, help='Limit number of datasets')
     p.add_argument('--verbose', action='store_true')
     p.add_argument('--n-estimators', type=int, default=32, help='Number of estimators for the ensemble')
+    p.add_argument(
+        '--kv-cache',
+        type=parse_kv_cache,
+        default=False,
+        help='KV cache mode for clf.fit(): false, true, kv, or repr',
+    )
     p.add_argument('--merge-val', default=True, action='store_true')
     p.add_argument('--num-gpus', type=int, default=8, help='Number of GPUs to use')
     p.add_argument('--no-coerce-numeric', dest='coerce_numeric', action='store_false')
@@ -544,7 +563,9 @@ def main(argv=None):
             True, # skip_regression
             0,    # bins
             args.merge_val,
-            args.coerce_numeric
+            args.coerce_numeric,
+            args.n_estimators,
+            args.kv_cache,
         ))
 
     # Run in parallel using multiprocessing
