@@ -58,22 +58,23 @@ def convert_features(X: np.ndarray, enabled: bool) -> np.ndarray:
         X = X.reshape(-1, 1)
 
     df = pd.DataFrame(X)
-    encoded = pd.DataFrame(index=df.index)
+    encoded_columns: list[pd.Series] = []
 
     for col in df.columns:
         series = df.iloc[:, col]
         numeric_series = pd.to_numeric(series, errors='coerce')
 
         if series.isna().equals(numeric_series.isna()):
-            encoded[col] = numeric_series
+            encoded_columns.append(numeric_series.rename(col))
         else:
             string_series = series.astype("string")
             codes, uniques = pd.factorize(string_series, sort=True)
             codes = codes.astype(np.int32)
             if (codes == -1).any():
                 codes[codes == -1] = len(uniques)
-            encoded[col] = codes
+            encoded_columns.append(pd.Series(codes, index=df.index, name=col))
 
+    encoded = pd.concat(encoded_columns, axis=1) if encoded_columns else pd.DataFrame(index=df.index)
     return encoded.fillna(0).values.astype(np.float32)
 
 
