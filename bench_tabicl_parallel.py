@@ -365,7 +365,7 @@ def summarize_task_types(dirs: list[Path]) -> dict[str, int]:
 
 def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpoint_version: str, dataset_dirs: List[Path],
                             verbose: bool = False, skip_regression: bool = True, bins: int = 0,
-                            merge_val: bool = False, coerce_numeric: bool = True):
+                            merge_val: bool = False, coerce_numeric: bool = True,n_estimators: int = 32) -> Tuple[List[Tuple[str, float, float]], set[str]]:
     """
     Worker function to evaluate a subset of datasets on a specific GPU.
     Returns a list of results (name, acc, duration) and a set of datasets with missing values.
@@ -393,7 +393,7 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpo
     print(f"{msg_prefix} Initializing model on {device_str} for {len(dataset_dirs)} datasets...")
     
     try:
-        clf = TabICLClassifier(verbose=verbose, model_path=model_path, device=device_str, checkpoint_version=checkpoint_version)
+        clf = TabICLClassifier(verbose=verbose, model_path=model_path, device=device_str, checkpoint_version=checkpoint_version,n_estimators=n_estimators)
     except Exception as e:
         print(f"{msg_prefix} Model initialization failed: {e}")
         return [], set()
@@ -487,14 +487,15 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpo
 def main(argv=None):
     p = argparse.ArgumentParser(description='Parallel Benchmark TabICLClassifier on TALENT datasets')
     p.add_argument('--model-path', default=None, help='Path to TabICL checkpoint')
-    p.add_argument('--data-root', default='data149', help='Root path to TALENT data folder')
-    p.add_argument('--outdir', default='evalution_data154_zijianv1.1', help='Directory to save results')
+    p.add_argument('--data-root', default='data181', help='Root path to TALENT data folder')
+    p.add_argument('--outdir', default='tabiclv2_ensmble32', help='Directory to save results')
     p.add_argument('--max-datasets', type=int, default=None, help='Limit number of datasets')
     p.add_argument('--verbose', action='store_true')
+    p.add_argument('--n-estimators', type=int, default=32, help='Number of estimators for the ensemble')
     p.add_argument('--merge-val', default=True, action='store_true')
-    p.add_argument('--num-gpus', type=int, default=4, help='Number of GPUs to use')
+    p.add_argument('--num-gpus', type=int, default=8, help='Number of GPUs to use')
     p.add_argument('--no-coerce-numeric', dest='coerce_numeric', action='store_false')
-    p.add_argument('--checkpoint-version', default='tabicl-classifier-v1.1-20250506.ckpt', help='Checkpoint version to use')
+    p.add_argument('--checkpoint-version', default='tabicl-classifier-v2-20260212.ckpt', help='Checkpoint version to use')
     p.set_defaults(coerce_numeric=True)
     args = p.parse_args(argv)
 

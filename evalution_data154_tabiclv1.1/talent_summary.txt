@@ -1,10 +1,10 @@
 
---- Run at 2026-02-23 14:25:17 ---
+--- Run at 2026-03-09 11:19:33 ---
 Total datasets: 149
-Average accuracy: 0.845783
-Total inference time s: 566.121
-Average inference time s: 3.799
-Script total execution time s: 193.792
+Average accuracy: 0.845782
+Total inference time s: 445.471
+Average inference time s: 2.990
+Script total execution time s: 171.348
 Datasets with NaN values: 13
 Average accuracy (NaN datasets): 0.784010
 List (NaN datasets): ASP-POTASSCO-classification, Credit_c, Customer_Personality_Analysis, Fitness_Club_c, HR_Analytics_Job_Change_of_Data_Scientists, Marketing_Campaign, UJI_Pen_Characters, Water_Quality_and_Potability, ada_prior, baseball, in_vehicle_coupon_recommendation, jm1, mice_protein_expression
