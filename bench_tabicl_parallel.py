@@ -502,10 +502,10 @@ def main(argv=None):
     p = argparse.ArgumentParser(description='Parallel Benchmark TabICLClassifier on TALENT datasets')
     p.add_argument('--model-path', default=None, help='Path to TabICL checkpoint')
     p.add_argument('--data-root', default='data181', help='Root path to TALENT data folder')
-    p.add_argument('--outdir', default='tabiclv2_ensmble32_data181_kvcache', help='Directory to save results')
+    p.add_argument('--outdir', default='tabiclv1_ensmble8_data181', help='Directory to save results')
     p.add_argument('--max-datasets', type=int, default=None, help='Limit number of datasets')
     p.add_argument('--verbose', action='store_true')
-    p.add_argument('--n-estimators', type=int, default=32, help='Number of estimators for the ensemble')
+    p.add_argument('--n-estimators', type=int, default=8, help='Number of estimators for the ensemble')
     p.add_argument(
         '--kv-cache',
         type=parse_kv_cache,
@@ -515,7 +515,7 @@ def main(argv=None):
     p.add_argument('--merge-val', default=True, action='store_true')
     p.add_argument('--num-gpus', type=int, default=8, help='Number of GPUs to use')
     p.add_argument('--no-coerce-numeric', dest='coerce_numeric', action='store_false')
-    p.add_argument('--checkpoint-version', default='tabicl-classifier-v2-20260212.ckpt', help='Checkpoint version to use')
+    p.add_argument('--checkpoint-version', default='tabicl-classifier-v1.1-20250506.ckpt', help='Checkpoint version to use')
     p.set_defaults(coerce_numeric=True)
     args = p.parse_args(argv)
 
