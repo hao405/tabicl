@@ -33,12 +33,12 @@ import math
 import torch
 
 # ------------------------------
-# 数据预处理工具 (unchanged)
+# 数据预处理工具
 # ------------------------------
 
 
 def parse_kv_cache(value: str) -> bool | str:
-    """Parse CLI kv_cache values into the types expected by TabICLClassifier.fit()."""
+    """将命令行中的 kv_cache 参数解析为 TabICLClassifier.fit() 所需的类型。"""
     lowered = value.strip().lower()
     if lowered in {"false", "0", "no", "off"}:
         return False
@@ -46,79 +46,74 @@ def parse_kv_cache(value: str) -> bool | str:
         return True
     if lowered in {"kv", "repr"}:
         return lowered
-    raise argparse.ArgumentTypeError("kv_cache must be one of: false, true, kv, repr")
+    raise argparse.ArgumentTypeError("kv_cache 必须是以下之一: false, true, kv, repr")
 
-def convert_features(X: np.ndarray, enabled: bool) -> np.ndarray:
-    """可选：把特征矩阵强制转换为数值型。"""
-    X = np.asarray(X)
-    if not enabled:
-        return X
+def make_feature_frame(
+    values: pd.DataFrame | np.ndarray,
+    *,
+    kind: str = "infer",
+    prefix: str = "x",
+) -> pd.DataFrame:
+    """构造一个 DataFrame，并尽量保留特征语义，交给 TabICL 自身做预处理。"""
+    if isinstance(values, pd.DataFrame):
+        df = values.copy()
+    else:
+        arr = np.asarray(values)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        df = pd.DataFrame(arr)
 
-    if X.ndim == 1:
-        X = X.reshape(-1, 1)
+    if kind == "numeric":
+        df = df.apply(pd.to_numeric, errors="coerce")
+    elif kind == "categorical":
+        df = df.astype("string")
+    elif kind == "infer":
+        df = df.convert_dtypes()
+    else:
+        raise ValueError(f"不支持的特征类型: {kind}")
 
-    df = pd.DataFrame(X)
-    encoded_columns: list[pd.Series] = []
-
-    for col in df.columns:
-        series = df.iloc[:, col]
-        numeric_series = pd.to_numeric(series, errors='coerce')
-
-        if series.isna().equals(numeric_series.isna()):
-            encoded_columns.append(numeric_series.rename(col))
-        else:
-            string_series = series.astype("string")
-            codes, uniques = pd.factorize(string_series, sort=True)
-            codes = codes.astype(np.int32)
-            if (codes == -1).any():
-                codes[codes == -1] = len(uniques)
-            encoded_columns.append(pd.Series(codes, index=df.index, name=col))
-
-    encoded = pd.concat(encoded_columns, axis=1) if encoded_columns else pd.DataFrame(index=df.index)
-    return encoded.fillna(0).values.astype(np.float32)
+    df.columns = [f"{prefix}_{i}" for i in range(df.shape[1])]
+    return df
 
 
-def handle_missing_entries(X: np.ndarray, y: np.ndarray, *, context: str) -> tuple[np.ndarray, np.ndarray]:
-    """处理缺失值并保证 X/y 对齐。"""
-    X = np.asarray(X)
+def make_target_array(values: np.ndarray) -> np.ndarray:
+    """将标签整理为一维 NumPy 数组，同时保留原始缺失值。"""
+    y = np.asarray(values)
+    if y.ndim > 1 and y.shape[1] == 1:
+        y = y.squeeze(1)
+    elif y.ndim > 1 and y.shape[0] == 1:
+        y = y.squeeze(0)
+    return pd.Series(y).values
+
+
+def split_single_file_dataset(
+    X: pd.DataFrame | np.ndarray,
+    y: np.ndarray,
+    *,
+    dataset_name: str,
+    test_size: float = 0.2,
+    random_state: int = 42,
+) -> tuple[pd.DataFrame | np.ndarray, pd.DataFrame | np.ndarray, np.ndarray, np.ndarray]:
+    """将单表数据集切分为 train/test；如果条件允许则优先分层抽样。"""
+    from sklearn.model_selection import train_test_split
+
     y = np.asarray(y)
-    context = context or "dataset"
+    if len(y) < 2:
+        raise ValueError(f"{dataset_name}: 行数不足，无法进行 train/test 切分")
 
-    df = pd.DataFrame(X)
-    y_series = pd.Series(y, index=df.index)
+    stratify = None
+    y_series = pd.Series(y)
+    class_counts = y_series.value_counts(dropna=False)
+    if y_series.nunique(dropna=False) > 1 and not class_counts.empty and int(class_counts.min()) >= 2:
+        stratify = y
 
-    drop_mask = pd.Series(False, index=df.index)
-
-    for col in df.columns:
-        series = df.iloc[:, col]
-        numeric_series = pd.to_numeric(series, errors='coerce')
-
-        if series.isna().equals(numeric_series.isna()):
-            nan_mask = numeric_series.isna()
-            if nan_mask.any():
-                mean_value =  float(numeric_series.mean(skipna=True))
-                if np.isnan(mean_value):
-                    mean_value = 0.0
-                df.iloc[:, col] = numeric_series.fillna(mean_value)
-                logging.debug(
-                    "%s: 数值列 %s 使用均值 %.6f 填充 %d 个 NaN",
-                    context,
-                    col,
-                    mean_value,
-                    int(nan_mask.sum()),
-                )
-        else:
-            nan_mask = series.isna()
-            if nan_mask.any():
-                drop_mask |= nan_mask
-
-    if drop_mask.any():
-        drop_count = int(drop_mask.sum())
-        df = df.loc[~drop_mask].copy()
-        y_series = y_series.loc[df.index]
-        logging.debug("%s: 删除 %d 行包含字符串缺失值", context, drop_count)
-
-    return df.values, y_series.values
+    try:
+        return train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=stratify)
+    except ValueError:
+        if stratify is None:
+            raise
+        logging.warning("%s: 分层 80/20 切分失败，回退到随机切分", dataset_name)
+        return train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=None)
 
 
 def count_missing(values: np.ndarray) -> int:
@@ -145,7 +140,7 @@ def log_nan_presence(context: str, values: np.ndarray, *, dataset_id: str | None
 
 
 # ------------------------------
-# 数据集文件查找与加载 (unchanged)
+# 数据集文件查找与加载
 # ------------------------------
 
 def find_data_files(dataset_dir: Path):
@@ -197,9 +192,19 @@ def load_array(file_path: Path) -> np.ndarray:
     return pd.read_csv(file_path, sep=sep, header=None).values
 
 
+def load_frame(file_path: Path) -> pd.DataFrame:
+    suffix = file_path.suffix.lower()
+    if suffix in {'.npy', '.npz'}:
+        return make_feature_frame(load_array(file_path), kind="infer", prefix=file_path.stem)
+    if suffix == '.parquet':
+        return make_feature_frame(pd.read_parquet(file_path), kind="infer", prefix=file_path.stem)
+    sep = '\t' if suffix == '.tsv' else None
+    return make_feature_frame(pd.read_csv(file_path, sep=sep, header=None), kind="infer", prefix=file_path.stem)
+
+
 def load_table(file_path: Union[Path, Tuple], context: str = "", coerce_numeric: bool = False,
                dataset_id: str | None = None, missing_registry: set[str] | None = None) -> Tuple[
-    np.ndarray, np.ndarray]:
+    pd.DataFrame, np.ndarray]:
     if isinstance(file_path, (tuple, list)):
         if len(file_path) == 2:
             Xp, yp = Path(file_path[0]), Path(file_path[1])
@@ -216,32 +221,16 @@ def load_table(file_path: Union[Path, Tuple], context: str = "", coerce_numeric:
                 dataset_id=dataset_id,
                 missing_registry=missing_registry,
             )
-        raise ValueError(f"Unsupported tuple format for load_table: {file_path}")
+        raise ValueError(f"load_table 不支持该元组格式: {file_path}")
 
-    suffix = file_path.suffix.lower()
-    if suffix in {'.npy', '.npz'}:
-        try:
-            arr = np.load(file_path, allow_pickle=False)
-        except ValueError:
-            arr = np.load(file_path, allow_pickle=True)
-        if isinstance(arr, np.lib.npyio.NpzFile):
-            arr = arr[list(arr.files)[0]]
-        data = np.asarray(arr)
-    elif suffix == '.parquet':
-        df = pd.read_parquet(file_path)
-        data = df.values
-    else:
-        sep = '\t' if file_path.suffix.lower() == '.tsv' else None
-        df = pd.read_csv(file_path, sep=sep, header=None)
-        data = df.values
-
+    data = load_frame(file_path)
     if data.ndim == 1:
-        raise ValueError(f"Unsupported 1D data in {file_path}")
+        raise ValueError(f"{file_path} 中的数据为 1D，当前不支持")
 
     log_target = context or str(file_path)
     log_nan_presence(f"{log_target}-raw", data, dataset_id=dataset_id, missing_registry=missing_registry)
 
-    col0 = data[:, 0]
+    col0 = data.iloc[:, 0]
     try:
         uniques0 = np.unique(col0)
     except Exception:
@@ -250,19 +239,18 @@ def load_table(file_path: Union[Path, Tuple], context: str = "", coerce_numeric:
     heuristic_column = None
     if 0 < uniques0.size < max(2, data.shape[0] // 2):
         y = col0
-        X = data[:, 1:]
+        X = data.iloc[:, 1:].copy()
         heuristic_column = 'first'
     else:
-        y = data[:, -1]
-        X = data[:, :-1]
+        y = data.iloc[:, -1]
+        X = data.iloc[:, :-1].copy()
         heuristic_column = 'last'
 
     log_nan_presence(f"{log_target}-X_raw", X, dataset_id=dataset_id, missing_registry=missing_registry)
     log_nan_presence(f"{log_target}-y_raw", y, dataset_id=dataset_id, missing_registry=missing_registry)
 
-    y = pd.Series(y).values
-    X, y = handle_missing_entries(X, y, context=log_target)
-    X = convert_features(X, coerce_numeric)
+    X = make_feature_frame(X, kind="infer", prefix=f"{Path(log_target).stem}_x")
+    y = make_target_array(y)
 
     if heuristic_column:
         logging.info(f"{log_target}: 使用单文件启发式拆分标签 (取 {heuristic_column} 列)")
@@ -270,7 +258,7 @@ def load_table(file_path: Union[Path, Tuple], context: str = "", coerce_numeric:
 
 
 def load_pair(X_path: Path, y_path: Path, context: str = "", coerce_numeric: bool = False,
-              dataset_id: str | None = None, missing_registry: set[str] | None = None) -> Tuple[np.ndarray, np.ndarray]:
+              dataset_id: str | None = None, missing_registry: set[str] | None = None) -> Tuple[pd.DataFrame, np.ndarray]:
     X = load_array(X_path)
     y = load_array(y_path)
 
@@ -278,63 +266,39 @@ def load_pair(X_path: Path, y_path: Path, context: str = "", coerce_numeric: boo
     log_nan_presence(f"{ctx}-X_raw", X, dataset_id=dataset_id, missing_registry=missing_registry)
     log_nan_presence(f"{ctx}-y_raw", y, dataset_id=dataset_id, missing_registry=missing_registry)
 
-    y = np.asarray(y)
-    if y.ndim > 1 and y.shape[1] == 1:
-        y = y.squeeze(1)
-    elif y.ndim > 1 and y.shape[0] == 1:
-        y = y.squeeze(0)
-
-    X = np.asarray(X)
-    if X.ndim == 1:
-        X = X.reshape(-1, 1)
-
-    y = pd.Series(y).values
-    X, y = handle_missing_entries(X, y, context=ctx)
-    X = convert_features(X, coerce_numeric)
+    X = make_feature_frame(X, kind="infer", prefix=f"{ctx}_x")
+    y = make_target_array(y)
     return X, y
 
 
 def load_split(num_path: Optional[Path], cat_path: Optional[Path], y_path: Path, context: str = "",
                coerce_numeric: bool = False, dataset_id: str | None = None, missing_registry: set[str] | None = None) -> \
-Tuple[np.ndarray, np.ndarray]:
-    features = []
+Tuple[pd.DataFrame, np.ndarray]:
+    features: list[pd.DataFrame] = []
     ctx_base = context or (num_path.stem if num_path else (cat_path.stem if cat_path else y_path.stem))
     if num_path:
         X_num = load_array(num_path)
-        X_num = np.asarray(X_num)
-        if X_num.ndim == 1:
-            X_num = X_num.reshape(-1, 1)
         log_nan_presence(f"{ctx_base}-num_raw", X_num, dataset_id=dataset_id, missing_registry=missing_registry)
-        features.append(X_num)
+        features.append(make_feature_frame(X_num, kind="numeric", prefix=f"{ctx_base}_n"))
     if cat_path:
         X_cat = load_array(cat_path)
-        X_cat = np.asarray(X_cat)
-        if X_cat.ndim == 1:
-            X_cat = X_cat.reshape(-1, 1)
         log_nan_presence(f"{ctx_base}-cat_raw", X_cat, dataset_id=dataset_id, missing_registry=missing_registry)
-        features.append(X_cat)
+        features.append(make_feature_frame(X_cat, kind="categorical", prefix=f"{ctx_base}_c"))
 
     if not features:
-        raise ValueError("No numeric or categorical feature files found for split")
+            raise ValueError("split 数据中未找到数值特征文件或类别特征文件")
 
     n_samples = features[0].shape[0]
     for idx, feat in enumerate(features):
         if feat.shape[0] != n_samples:
-            raise ValueError(f"Feature array #{idx} has mismatched sample count: {feat.shape[0]} vs {n_samples}")
+            raise ValueError(f"特征数组 #{idx} 的样本数不一致: {feat.shape[0]} vs {n_samples}")
 
-    X = features[0] if len(features) == 1 else np.concatenate(features, axis=1)
+    X = features[0] if len(features) == 1 else pd.concat(features, axis=1)
     log_nan_presence(f"{ctx_base}-X_raw", X, dataset_id=dataset_id, missing_registry=missing_registry)
 
     y = load_array(y_path)
-    y = np.asarray(y)
     log_nan_presence(f"{ctx_base}-y_raw", y, dataset_id=dataset_id, missing_registry=missing_registry)
-    if y.ndim > 1 and y.shape[1] == 1:
-        y = y.squeeze(1)
-    elif y.ndim > 1 and y.shape[0] == 1:
-        y = y.squeeze(0)
-    y = pd.Series(y).values
-    X, y = handle_missing_entries(X, y, context=ctx_base)
-    X = convert_features(X, coerce_numeric)
+    y = make_target_array(y)
     return X, y
 
 
@@ -373,7 +337,7 @@ def summarize_task_types(dirs: list[Path]) -> dict[str, int]:
 
 
 # ------------------------------
-# 核心评测逻辑 (Worker)
+# 核心评测逻辑（Worker）
 # ------------------------------
 
 def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpoint_version: str, dataset_dirs: List[Path],
@@ -381,8 +345,8 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpo
                             merge_val: bool = False, coerce_numeric: bool = True,
                             n_estimators: int = 32, kv_cache: bool | str = False) -> Tuple[List[Tuple[str, float, float]], set[str]]:
     """
-    Worker function to evaluate a subset of datasets on a specific GPU.
-    Returns a list of results (name, acc, duration) and a set of datasets with missing values.
+    在指定 GPU 上评测一部分数据集的 worker 函数。
+    返回值包含结果列表 (name, acc, duration) 和一个记录含缺失值数据集名称的集合。
     """
     import sys
     from pathlib import Path
@@ -395,21 +359,21 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpo
         from sklearn.utils.multiclass import type_of_target
         from sklearn.preprocessing import KBinsDiscretizer
     except ImportError as e:
-        print(f"[Worker {rank}] Import error: {e}")
+        print(f"[Worker {rank}] 导入失败: {e}")
         return [], set()
 
-    # Set device
-    # Use cuda:X logic
+    # 设置运行设备
+    # 使用 cuda:X 的设备表示方式
     device_str = f"cuda:{device_id}" if device_id >= 0 else "cpu"
     
     msg_prefix = f"[GPU {device_id}]"
 
-    print(f"{msg_prefix} Initializing model on {device_str} for {len(dataset_dirs)} datasets...")
+    print(f"{msg_prefix} 在 {device_str} 上初始化模型，待处理数据集数: {len(dataset_dirs)}")
     
     try:
         clf = TabICLClassifier(verbose=verbose, model_path=model_path, device=device_str, checkpoint_version=checkpoint_version,n_estimators=n_estimators)
     except Exception as e:
-        print(f"{msg_prefix} Model initialization failed: {e}")
+        print(f"{msg_prefix} 模型初始化失败: {e}")
         return [], set()
 
     results = []
@@ -439,31 +403,24 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpo
                 X_test, y_test = load_table(test_path, context=f"{d.name}-test", coerce_numeric=coerce_numeric,
                                             dataset_id=d.name, missing_registry=datasets_with_missing)
             else:
-                print(f"{msg_prefix} 数据集：{d.name} (即使是单文件也暂不支持自动拆分或逻辑未触发)")
+                X_all, y_all = load_table(train_path, context=f"{d.name}-single", coerce_numeric=coerce_numeric,
+                                          dataset_id=d.name, missing_registry=datasets_with_missing)
+                X_train, X_test, y_train, y_test = split_single_file_dataset(X_all, y_all, dataset_name=d.name)
                 val_path = None
-                continue
+                print(f"{msg_prefix} 数据集：{d.name} (单文件数据按 80/20 自动切分)")
 
             X_val = y_val = None
             if val_path:
                 X_val, y_val = load_table(val_path, context=f"{d.name}-val", coerce_numeric=coerce_numeric,
                                           dataset_id=d.name, missing_registry=datasets_with_missing)
-                if X_val.ndim == 3 and X_val.shape[1] == 1:
-                    X_val = X_val.squeeze(1)
-                if X_val.ndim == 1:
-                    X_val = X_val.reshape(-1, 1)
                 y_val = np.asarray(y_val)
                 if y_val.ndim > 1 and y_val.shape[-1] == 1:
                     y_val = y_val.reshape(-1)
                 if merge_val:
-                    X_train = np.concatenate([X_train, X_val], axis=0)
+                    X_train = pd.concat([X_train, X_val], axis=0, ignore_index=True)
                     y_train = np.concatenate([y_train, y_val], axis=0)
 
-            if X_train.ndim == 3 and X_train.shape[1] == 1:
-                X_train = X_train.squeeze(1)
-            if X_test.ndim == 3 and X_test.shape[1] == 1:
-                X_test = X_test.squeeze(1)
-
-            # Target type check
+            # 检查标签类型
             tgt_type = None
             try:
                 tgt_type = type_of_target(y_train)
@@ -499,27 +456,33 @@ def evaluate_datasets_worker(rank: int, device_id: int, model_path: str, checkpo
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description='Parallel Benchmark TabICLClassifier on TALENT datasets')
-    p.add_argument('--model-path', default='tabicl-classifier-v1.1-20250506.ckpt', help='Path to TabICL checkpoint')
-    p.add_argument('--data-root', default='data181', help='Root path to TALENT data folder')
-    p.add_argument('--outdir', default='tabiclv1_ensmble8_data181', help='Directory to save results')
-    p.add_argument('--max-datasets', type=int, default=None, help='Limit number of datasets')
+    p = argparse.ArgumentParser(description='在 TALENT 数据集上并行评测 TabICLClassifier')
+    p.add_argument('--model-path', default='tabicl-classifier-v1.1-20250506.ckpt', help='TabICL checkpoint 路径')
+    p.add_argument('--data-root', default='data181', help='TALENT 数据目录根路径')
+    p.add_argument('--outdir', default='tabiclv1_ensmble8_data181', help='结果输出目录')
+    p.add_argument('--max-datasets', type=int, default=None, help='限制最多处理的数据集数量')
     p.add_argument('--verbose', action='store_true')
-    p.add_argument('--n-estimators', type=int, default=8, help='Number of estimators for the ensemble')
+    p.add_argument('--n-estimators', type=int, default=8, help='集成中的估计器数量')
     p.add_argument(
         '--kv-cache',
         type=parse_kv_cache,
         default=False,
-        help='KV cache mode for clf.fit(): false, true, kv, or repr',
+        help='clf.fit() 使用的 KV cache 模式: false、true、kv 或 repr',
     )
     p.add_argument('--merge-val', default=True, action='store_true')
-    p.add_argument('--num-gpus', type=int, default=8, help='Number of GPUs to use')
-    p.add_argument('--no-coerce-numeric', dest='coerce_numeric', action='store_false')
-    p.add_argument('--checkpoint-version', default='tabicl-classifier-v1.1-20250506.ckpt', help='Checkpoint version to use')
+    p.add_argument('--num-gpus', type=int, default=8, help='使用的 GPU 数量')
+    p.add_argument(
+        '--no-coerce-numeric',
+        dest='coerce_numeric',
+        action='store_false',
+        help='兼容旧命令行的废弃参数。特征编码和缺失值处理现在由 TabICLClassifier 内部完成。',
+    )
+    p.add_argument('--checkpoint-version', default='tabicl-classifier-v1.1-20250506.ckpt', help='使用的 checkpoint 版本')
     p.set_defaults(coerce_numeric=True)
     args = p.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
+    logging.info("特征预处理已交给 TabICLClassifier 内部完成（包括类别编码和缺失值处理）。")
     
     script_start_time = time.time()
     
@@ -527,32 +490,30 @@ def main(argv=None):
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # Get all datasets
+    # 收集所有数据集目录
     dirs = [d for d in sorted(data_root.iterdir()) if d.is_dir()]
     if args.max_datasets:
         dirs = dirs[:args.max_datasets]
     
     total_datasets = len(dirs)
-    logging.info(f"Total datasets to process: {total_datasets} using {args.num_gpus} GPUs")
+    logging.info(f"待处理数据集总数: {total_datasets}，使用 GPU 数量: {args.num_gpus}")
 
-    # Split datasets into chunks
+    # 按 GPU 数量将数据集切分成多个分块
     num_gpus = args.num_gpus
     chunk_size = math.ceil(total_datasets / num_gpus)
     chunks = [dirs[i:i + chunk_size] for i in range(0, total_datasets, chunk_size)]
     
-    # Prune empty chunks if datasets < num_gpus
+    # 当数据集数量少于 GPU 数量时，移除空分块
     chunks = [c for c in chunks if len(c) > 0]
     
-    logging.info(f"Split into {len(chunks)} chunks. Max chunk size: {chunk_size}")
+    logging.info(f"已切分为 {len(chunks)} 个分块，最大分块大小: {chunk_size}")
 
-    # Prepare arguments for starmap
-    # (rank, device_id, model_path, dataset_dirs, verbose, skip_regression, bins, merge_val, coerce_numeric)
+    # 为 starmap 组织参数
+    # 参数顺序: (rank, device_id, model_path, dataset_dirs, verbose, skip_regression, bins, merge_val, coerce_numeric)
     tasks = []
     for i, chunk in enumerate(chunks):
-        # Determine device ID. If we have more chunks than GPUs (unlikely with this logic logic), mod it.
-        # Logic here assumes we launch len(chunks) processes.
-        # Map process i to gpu i % valid_gpus (if we want to oversubscribe, but here we assume dedicated)
-        # Actually user said "8 cards parallel", so mapping rank i to gpu i is fine.
+        # 计算该 worker 对应的设备编号。
+        # 这里默认每个分块启动一个进程，并将 rank i 映射到 gpu i。
         device_id = i % num_gpus
         tasks.append((
             i, 
@@ -561,21 +522,21 @@ def main(argv=None):
             args.checkpoint_version,
             chunk,
             args.verbose,
-            True, # skip_regression
-            0,    # bins
+            True, # 是否跳过回归任务
+            0,    # 连续标签分桶数
             args.merge_val,
             args.coerce_numeric,
             args.n_estimators,
             args.kv_cache,
         ))
 
-    # Run in parallel using multiprocessing
-    # Note: 'spawn' context is safer for PyTorch/CUDA
+    # 使用 multiprocessing 并行运行
+    # 对 PyTorch/CUDA 来说，spawn 上下文通常更安全
     ctx = multiprocessing.get_context('spawn')
     with ctx.Pool(processes=len(tasks)) as pool:
         results_list = pool.starmap(evaluate_datasets_worker, tasks)
 
-    # Aggregate results
+    # 汇总结果
     all_results = []
     all_missing_registry = set()
 
@@ -583,11 +544,11 @@ def main(argv=None):
         all_results.extend(res)
         all_missing_registry.update(missing)
     
-    # Sort results by dataset name for consistency
+    # 按数据集名称排序，保证结果输出稳定
     all_results.sort(key=lambda x: x[0])
 
     if all_results:
-        # 汇总统计
+        # 计算汇总统计指标
         total_time = sum(duration for _, _, duration in all_results)
         avg_time = total_time / len(all_results)
         avg_acc = sum(acc for _, acc, _ in all_results) / len(all_results)
@@ -603,7 +564,7 @@ def main(argv=None):
                 f.write(f"{name},{acc:.6f},{duration:.3f}\n")
             f.write(f"Average,{avg_acc:.6f},{avg_time:.3f}\n")
 
-        # Summary text
+        # 写入文字版摘要
         missing_results = [(name, acc) for name, acc, _ in all_results if name in all_missing_registry]
         missing_names = sorted(name for name, _ in missing_results)
         avg_missing_acc = sum(acc for _, acc in missing_results) / len(missing_results) if missing_results else None
@@ -623,10 +584,10 @@ def main(argv=None):
             else:
                 f.write("Datasets with NaN values: 0\n")
 
-        logging.info(f"Evaluation complete. Results saved to {outdir}")
-        logging.info(f"Average Accuracy: {avg_acc:.4f}, Average Time: {avg_time:.2f}s, Script Duration: {script_duration:.2f}s")
+        logging.info(f"评测完成，结果已保存到 {outdir}")
+        logging.info(f"平均准确率: {avg_acc:.4f}，平均耗时: {avg_time:.2f}s，脚本总耗时: {script_duration:.2f}s")
     else:
-        logging.info("No successful results obtained.")
+        logging.info("没有获得成功的评测结果。")
 
 if __name__ == '__main__':
     main()

@@ -111,6 +111,27 @@ clf = TabICLClassifier(
 `TabICLRegressor` accepts the same parameters except for the classification-specific ones:
 `class_shuffle_method`, `softmax_temperature`, `average_logits`, and `support_many_classes`.
 
+## Oracle pseudo-label analysis
+
+This repository also includes an experimental script for **oracle pseudo-label analysis**:
+[`scripts/run_pseudo_label_oracle.py`](./scripts/run_pseudo_label_oracle.py).
+It is intended for controlled analysis only, not for standard unlabeled self-training.
+The script predicts on a target split, uses the target labels only as an oracle to keep
+the correctly predicted samples, appends those samples back with their predicted labels,
+rebuilds the TabICL context via `fit()`, and tracks performance round by round.
+
+Minimal example:
+
+```bash
+python scripts/run_pseudo_label_oracle.py \
+  --data-root /path/to/TALENT/data \
+  --dataset-name adult \
+  --checkpoint-version tabicl-classifier-v2-20260212.ckpt \
+  --max-rounds 3 \
+  --min-added 1 \
+  --output-dir ./oracle_pseudo_label_results/adult
+```
+
 ## Available models
 
 | Model | Classification checkpoint | Regression checkpoint |
